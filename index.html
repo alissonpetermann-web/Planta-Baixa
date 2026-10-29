@@ -97,6 +97,7 @@ dialog .end{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
   <button class="tool" data-tool="window" title="Janela (J)"><svg viewBox="0 0 24 24"><path d="M2 9h5v6H2zM17 9h5v6h-5zM7 10h10M7 14h10M7 12h10"/></svg>Janela</button>
   <button class="tool" data-tool="stair" title="Escada (E)"><svg viewBox="0 0 24 24"><path d="M6 3h12v18H6z"/><path d="M6 7h12M6 11h12M6 15h12M12 19V5m-2 2 2-2 2 2"/></svg>Escada</button>
   <button class="tool" data-tool="dim" title="Cota (C)"><svg viewBox="0 0 24 24"><path d="M4 7v10M20 7v10M4 12h16M6 14l-2-2 2-2M18 10l2 2-2 2"/></svg>Cota</button>
+  <button class="tool" data-tool="line" title="Linha (L)"><svg viewBox="0 0 24 24"><path d="M4 8h16"/><path d="M4 16h3M10 16h4M17 16h3"/></svg>Linha</button>
   <button class="tool" data-tool="text" title="Texto (T)"><svg viewBox="0 0 24 24"><path d="M5 5h14M12 5v14M9 19h6"/></svg>Texto</button>
 </nav>
 
@@ -543,6 +544,7 @@ const V={
   rot:(a,deg)=>{const r=deg*Math.PI/180,c=Math.cos(r),s=Math.sin(r);return[a[0]*c-a[1]*s,a[0]*s+a[1]*c]}
 };
 const DEG=180/Math.PI;
+const DASH=[2,1];
 const R2=p=>[Math.round(p[0]*100)/100,Math.round(p[1]*100)/100];
 function projSeg(p,a,b){const ab=V.sub(b,a),L2=V.dot(ab,ab)||1e-9,t=V.dot(V.sub(p,a),ab)/L2,tc=Math.max(0,Math.min(1,t)),q=V.add(a,V.mul(ab,tc));return{t,tc,q,d:V.dist(p,q)};}
 const fmt=cm=>(Math.round(cm)/100).toFixed(2).replace('.',',');
@@ -557,7 +559,7 @@ function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('on');
 /* ---------- documento ---------- */
 function newDoc(){return{v:1,seq:1,
   meta:{titulo:'Planta baixa',obra:'',responsavel:'Eng. Civil Alisson Petermann, CREA/SC 187.845-5',empresa:'Petermann Engenharia e Consultoria',data:today(),folha:'01/01',formato:'a4',orient:'landscape',escala:'auto'},
-  cfg:{scale:50,grid:5,snap:true,ortho:'90',wallT:15,wallDims:true,fill:'#cfcfcf'},
+  cfg:{scale:50,grid:5,snap:true,ortho:'90',wallT:15,wallDims:true,fill:'#cfcfcf',wallMode:'linha',rectInner:true,lineDash:false,lineW:0.18},
   els:[]};}
 let doc=newDoc();
 try{const s=JSON.parse(localStorage.getItem(STORE)||'null');if(s&&Array.isArray(s.els)){doc=Object.assign(newDoc(),s);doc.cfg=Object.assign(newDoc().cfg,s.cfg);doc.meta=Object.assign(newDoc().meta,s.meta);}}catch(e){}
@@ -581,6 +583,12 @@ function wallPoly(w){const{A,B,u,n}=wInfo(w),h=w.t/2,a=V.sub(A,V.mul(u,endExt(A,
   return[V.add(a,V.mul(n,-h)),V.add(b,V.mul(n,-h)),V.add(b,V.mul(n,h)),V.add(a,V.mul(n,h))];}
 function centroid(){const ws=walls();if(!ws.length)return[0,0];let x=0,y=0;ws.forEach(w=>{x+=w.ax+w.bx;y+=w.ay+w.by;});return[x/(2*ws.length),y/(2*ws.length)];}
 function dimSide(w,c){if(w.ds)return w.ds;const{A,B,n}=wInfo(w),m=V.mul(V.add(A,B),.5);return V.dot(n,V.sub(c||centroid(),m))>0.01?-1:1;}
+function rayFree(w,sg){const{A,B,n}=wInfo(w),m=V.mul(V.add(A,B),.5),d=V.mul(n,sg);
+  for(const o of doc.els){if(o.type!=='wall'||o===w)continue;const P0=[o.ax,o.ay],e=V.sub([o.bx,o.by],P0),L=V.len(e);if(L<1)continue;
+    const den=d[0]*e[1]-d[1]*e[0];if(Math.abs(den)<1e-9)continue;const q=V.sub(P0,m),t=(q[0]*e[1]-q[1]*e[0])/den,u=(q[0]*d[1]-q[1]*d[0])/den,x=o.t/2/L;
+    if(t>w.t/2+0.5&&u>=-x&&u<=1+x)return false;}return true;}
+function wallDimSide(w,c){if(w.ds)return w.ds;const f1=rayFree(w,1),f2=rayFree(w,-1);
+  if(f1&&!f2)return 1;if(f2&&!f1)return -1;if(!f1&&!f2&&w.dim!=='sim')return 0;return dimSide(w,c);}
 function openingSpan(o,w){const{L}=wInfo(w);const c=Math.min(Math.max(o.c,o.w/2),Math.max(o.w/2,L-o.w/2));return[c-o.w/2,c+o.w/2,c];}
 
 /* ---------- construção das primitivas (tela e PDF usam a mesma) ---------- */
@@ -654,7 +662,8 @@ function build(scale){
     poly(Array.from({length:16},(_,i)=>[ap[0][0]+P(0.7)*Math.cos(i*Math.PI/8),ap[0][1]+P(0.7)*Math.sin(i*Math.PI/8)]),'#000',null,0);
     if(st.label)text(T(G.lab),st.label,2.0,upright(st.a));
   }
-  if(cfg.wallDims)ws.forEach(w=>{if(w.dim===false)return;const{A,B,L}=wInfo(w);if(L<1)return;dim(A,B,dimSide(w,cen)*(w.t/2+P(6)),fmt(L));});
+  for(const l of doc.els)if(l.type==='line')poly([[l.ax,l.ay],[l.bx,l.by]],null,'#000',l.lw||0.18,false,l.dash?DASH:null);
+  if(cfg.wallDims)ws.forEach(w=>{if(w.dim===false)return;const{A,B,L}=wInfo(w);if(L<1)return;const sd=wallDimSide(w,cen);if(sd)dim(A,B,sd*(w.t/2+P(6)),fmt(L));});
   for(const d of doc.els)if(d.type==='dim')dim([d.ax,d.ay],[d.bx,d.by],d.off,d.txt);
   for(const t of doc.els)if(t.type==='text')text([t.x,t.y],t.txt,t.h,t.a,t.bold);
   return out;
@@ -668,7 +677,7 @@ function bboxOf(prims,scale){const P=mm=>mm*scale/10;let x0=1e9,y0=1e9,x1=-1e9,y
 const svg=$('#cv'),stage=$('#stage');
 let W=0,H=0;const view={x0:-200,y0:-200,z:0.6};
 let stairKind='reta';const STAIR_DEF={reta:{L:280,n:10},L:{L1:200,L2:150,n:14},U:{L1:225,g:10,n:16}};
-let tool='sel',sel=null,hover=null,chain=null,chainStart=null,dimTmp=null,spaceDown=false;
+let tool='sel',sel=null,hover=null,chain=null,chainStart=null,dimTmp=null,spaceDown=false,rectP1=null,rectW='',rectH='';
 const s2w=(sx,sy)=>[sx/view.z+view.x0,sy/view.z+view.y0];
 function resize(){const r=stage.getBoundingClientRect();W=r.width;H=r.height;render();}
 function gridSVG(){const z=view.z,x0=view.x0,y0=view.y0,x1=x0+W/z,y1=y0+H/z;
@@ -683,7 +692,7 @@ function render(){
   let s=gridSVG();
   for(const p of build(sc)){
     if(p.k==='poly'){const d='M'+p.pts.map(q=>f2(q[0])+' '+f2(q[1])).join('L')+(p.closed?'Z':'');const sw=p.stroke?Math.max(p.lw*k,0.9*px):0;
-      s+=`<path d="${d}" fill="${p.fill||'none'}" stroke="${p.stroke||'none'}" stroke-width="${sw.toFixed(3)}"/>`;}
+      s+=`<path d="${d}" fill="${p.fill||'none'}" stroke="${p.stroke||'none'}" stroke-width="${sw.toFixed(3)}"${p.dash?` stroke-dasharray="${p.dash.map(v=>f2(Math.max(v*k,(v>1.5?6:3)*px))).join(' ')}"`:''}/>`;}
     else{const[x,y]=p.p;s+=`<text x="${f2(x)}" y="${f2(y)}" font-size="${f2(p.h*k)}" transform="rotate(${f2(p.a)} ${f2(x)} ${f2(y)})" text-anchor="middle" dominant-baseline="central"${p.bold?' font-weight="700"':''}>${esc(p.s)}</text>`;}
   }
   s+=overlay();svg.innerHTML=s;
@@ -692,7 +701,7 @@ function render(){
 const AC='#1f8a5c';
 function handlesOf(e){if(!e)return[];const P=mm=>mm*doc.cfg.scale/10;
   if(e.type==='wall')return[{h:'a',p:[e.ax,e.ay]},{h:'b',p:[e.bx,e.by]}];
-  if(e.type==='dim')return[{h:'a',p:[e.ax,e.ay]},{h:'b',p:[e.bx,e.by]}];
+  if(e.type==='dim'||e.type==='line')return[{h:'a',p:[e.ax,e.ay]},{h:'b',p:[e.bx,e.by]}];
   if(e.type==='stair')return[{h:'rot',p:V.add([e.x,e.y],V.rot([stairGeo(e,P).w/2+P(7),0],e.a))}];
   if(e.type==='text')return[{h:'rot',p:V.add([e.x,e.y],V.rot([textHalfW(e)+P(5),0],e.a))}];
   return[];}
@@ -705,12 +714,16 @@ function overlay(){const px=1/view.z,P=mm=>mm*doc.cfg.scale/10;let s='';const e=
     else if(e.type==='door'||e.type==='window'){const w=byId(e.wall);if(w){const{A,u,n}=wInfo(w),[s0,s1]=openingSpan(e,w),h=w.t/2+3*px,p=(a,b)=>V.add(V.add(A,V.mul(u,a)),V.mul(n,b));
       s+=pth([p(s0,-h),p(s1,-h),p(s1,h),p(s0,h)],true);s+=pth(wallPoly(w),true,true,1);s+=lbl([w.ax,w.ay],'A')+lbl([w.bx,w.by],'B');}}
     else if(e.type==='stair'){const C=[e.x,e.y],G=stairGeo(e,P),pt=(x,y)=>V.add(C,V.rot([x,y],e.a));s+=pth(G.out.map(q=>pt(q[0],q[1])),true);s+=pth([pt(G.w/2,0),pt(G.w/2+P(7),0)],false,true,1);}
+    else if(e.type==='line'){s+=pth([[e.ax,e.ay],[e.bx,e.by]],false,false,3);}
     else if(e.type==='dim'){const a=[e.ax,e.ay],b=[e.bx,e.by],n=V.perp(V.norm(V.sub(b,a)));s+=pth([a,V.add(a,V.mul(n,e.off)),V.add(b,V.mul(n,e.off)),b],false,true);}
     else if(e.type==='text'){const hw=textHalfW(e),ls=String(e.txt).split('\n').length,hh=P(e.h)*(0.7+0.65*(ls-1)),C=[e.x,e.y],pt=(x,y)=>V.add(C,V.rot([x,y],e.a));
       s+=pth([pt(-hw,-hh),pt(hw,-hh),pt(hw,hh),pt(-hw,hh)],true,true);s+=pth([pt(hw,0),pt(hw+P(5),0)],false,true,1);}
     for(const h of handlesOf(e)){s+=`<circle cx="${f2(h.p[0])}" cy="${f2(h.p[1])}" r="${7*px}" fill="#fff" stroke="${AC}" stroke-width="${2.5*px}"/>`;if(h.h!=='rot'&&e.type==='wall')s+=lbl(h.p,h.h.toUpperCase());if(h.h==='rot')s+=`<circle cx="${f2(h.p[0])}" cy="${f2(h.p[1])}" r="${2.5*px}" fill="${AC}"/>`;}
   }
-  if(tool==='wall'&&chain){const p=hover?hover.p:chain;s+=`<circle cx="${f2(chain[0])}" cy="${f2(chain[1])}" r="${5*px}" fill="${AC}"/>`;
+  if(tool==='wall'&&doc.cfg.wallMode==='ret'){const r=rectPreview();if(r){s+=pth(r.pts,true,true);const m=V.mul(V.add(r.pts[0],r.pts[2]),.5);
+      s+=`<text x="${f2(m[0])}" y="${f2(m[1])}" font-size="${13*px}" text-anchor="middle" dominant-baseline="central" style="fill:${AC};font-weight:700">${r.lbl}</text>`;}
+    if(rectP1)s+=`<circle cx="${f2(rectP1[0])}" cy="${f2(rectP1[1])}" r="${5*px}" fill="${AC}"/>`;}
+  if((tool==='wall'||tool==='line')&&chain){const p=hover?hover.p:chain;s+=`<circle cx="${f2(chain[0])}" cy="${f2(chain[1])}" r="${5*px}" fill="${AC}"/>`;
     if(V.dist(p,chain)>0.5){s+=pth([chain,p],false,true);const m=V.mul(V.add(chain,p),.5);s+=`<text x="${f2(m[0])}" y="${f2(m[1]-10*px)}" font-size="${13*px}" text-anchor="middle" style="fill:${AC};font-weight:700">${fmt(V.dist(chain,p))} m</text>`;}}
   if(tool==='dim'&&dimTmp){const a=dimTmp.a,b=dimTmp.b||(hover?hover.p:a);s+=pth([a,b],false,true);
     if(dimTmp.b&&hover){const n=V.perp(V.norm(V.sub(dimTmp.b,a))),off=V.dot(V.sub(hover.p,a),n);s+=pth([a,V.add(a,V.mul(n,off)),V.add(dimTmp.b,V.mul(n,off)),dimTmp.b],false,true,1.5);}}
@@ -725,7 +738,7 @@ function snapPoint(raw,{from=null,exclude=null,faces=false}={}){
   const cand=p=>{const d=V.dist(p,raw);if(d<bd){bd=d;best=p;}};
   for(const e of doc.els){if(e===exclude)continue;
     if(e.type==='wall'){cand([e.ax,e.ay]);cand([e.bx,e.by]);if(faces)wallPoly(e).forEach(cand);}
-    else if(e.type==='dim'){cand([e.ax,e.ay]);cand([e.bx,e.by]);}}
+    else if(e.type==='dim'||e.type==='line'){cand([e.ax,e.ay]);cand([e.bx,e.by]);}}
   if(best)return{p:best.slice(),kind:'pt'};
   const g=cfg.snap?cfg.grid:0.1,rg=v=>Math.round(v/g)*g;
   if(from&&cfg.ortho!=='free'){const step=cfg.ortho==='45'?45:90,d=V.sub(raw,from),a=Math.round(Math.atan2(d[1],d[0])*DEG/step)*step,u=V.rot([1,0],a);
@@ -739,6 +752,7 @@ function snapPoint(raw,{from=null,exclude=null,faces=false}={}){
 /* ---------- hit test ---------- */
 function hit(p){const tol=10/view.z,P=mm=>mm*doc.cfg.scale/10,list=doc.els.slice().reverse();
   for(const e of list)if(e.type==='text'){const l=V.rot(V.sub(p,[e.x,e.y]),-e.a),ls=String(e.txt).split('\n').length;if(Math.abs(l[0])<=textHalfW(e)+tol&&Math.abs(l[1])<=P(e.h)*(0.6+0.65*(ls-1))+tol)return e;}
+  for(const e of list)if(e.type==='line'){if(projSeg(p,[e.ax,e.ay],[e.bx,e.by]).d<tol)return e;}
   for(const e of list)if(e.type==='dim'){const a=[e.ax,e.ay],b=[e.bx,e.by],n=V.perp(V.norm(V.sub(b,a)));if(projSeg(p,V.add(a,V.mul(n,e.off)),V.add(b,V.mul(n,e.off))).d<tol)return e;}
   for(const e of list)if(e.type==='door'||e.type==='window'){const w=byId(e.wall);if(!w)continue;const{A,u,n}=wInfo(w),[s0,s1]=openingSpan(e,w),l=V.sub(p,A),x=V.dot(l,u),y=V.dot(l,n);if(x>=s0-tol/2&&x<=s1+tol/2&&Math.abs(y)<=w.t/2+tol)return e;}
   for(const e of list)if(e.type==='stair'){const l=V.rot(V.sub(p,[e.x,e.y]),-e.a);if(inPoly(l,stairGeo(e,P).out))return e;}
@@ -753,6 +767,27 @@ function addWall(a,b){const w={type:'wall',id:nid(),ax:a[0],ay:a[1],bx:b[0],by:b
 function addOpening(type,w,c){const{L}=wInfo(w),isD=type==='door';const o={type,id:nid(),wall:w.id,w:isD?80:120,h:isD?210:100,sill:isD?0:110,c:0,side:1,hinge:0,dt:'abrir',ls:1,code:isD?'P':'J',showLabel:true};
   if(L<o.w+2){if(L<40){toast('Parede curta demais para a abertura');return null;}o.w=Math.floor((L-2)/5)*5;}
   const g=doc.cfg.grid;o.c=Math.min(Math.max(Math.round(c/g)*g,o.w/2),L-o.w/2);doc.els.push(o);return o;}
+function rectHint(){return(rectDims()?'Toque onde ficará o canto superior esquerdo do cômodo.':rectP1?'Toque o canto oposto do cômodo.':'Digite largura e comprimento, ou toque dois cantos opostos.')+' '+(doc.cfg.rectInner?'Medidas internas: a espessura da parede é somada.':'Medidas de eixo.');}
+function updRectHint(){const h=$('#dbHint');if(h)h.textContent=rectHint();}
+function rectDims(){const t=doc.cfg.wallT,w=num(rectW)*100,h=num(rectH)*100;if(!(w>0&&h>0))return null;const ex=doc.cfg.rectInner?t:0;return[w+ex,h+ex];}
+function rectPreview(){const px=1/view.z,t=doc.cfg.wallT,d=rectDims();let a,b;
+  if(d){if(!hover)return null;a=hover.p;b=V.add(a,d);}else if(rectP1&&hover){a=rectP1;b=hover.p;}else return null;
+  const w=Math.abs(b[0]-a[0]),h=Math.abs(b[1]-a[1]);if(w<1||h<1)return null;
+  const lbl=doc.cfg.rectInner?`int. ${fmt(w-t)} x ${fmt(h-t)} m`:`${fmt(w)} x ${fmt(h)} m (eixo)`;
+  return{pts:[a,[b[0],a[1]],b,[a[0],b[1]]],lbl};}
+function addWallUncovered(a,b){const L=V.dist(a,b);if(L<1)return 0;const u=V.mul(V.sub(b,a),1/L),cr=q=>{const d=V.sub(q,a);return d[0]*u[1]-d[1]*u[0];};let iv=[[0,L]];
+  for(const w of walls()){const A=[w.ax,w.ay],B=[w.bx,w.by];if(Math.abs(cr(A))>0.6||Math.abs(cr(B))>0.6)continue;
+    let t0=V.dot(V.sub(A,a),u),t1=V.dot(V.sub(B,a),u);if(t0>t1)[t0,t1]=[t1,t0];
+    const nx=[];for(const[s0,s1]of iv){if(t1<=s0||t0>=s1){nx.push([s0,s1]);continue;}if(t0>s0)nx.push([s0,t0]);if(t1<s1)nx.push([t1,s1]);}iv=nx;}
+  let n=0;for(const[s0,s1]of iv)if(s1-s0>=1){addWall(R2(V.add(a,V.mul(u,s0))),R2(V.add(a,V.mul(u,s1))));n++;}return n;}
+function addRect(a,b){const x0=Math.min(a[0],b[0]),x1=Math.max(a[0],b[0]),y0=Math.min(a[1],b[1]),y1=Math.max(a[1],b[1]);
+  if(x1-x0<1||y1-y0<1)return false;const c=[[x0,y0],[x1,y0],[x1,y1],[x0,y1]].map(R2);let n=0;
+  for(let i=0;i<4;i++)n+=addWallUncovered(c[i],c[(i+1)%4]);
+  if(!n){toast('As paredes desse retângulo já existem');return false;}
+  if(doc.cfg.rectInner){const h=doc.cfg.wallT/2,off=Math.min(40,(y1-y0)/4,(x1-x0)/4);
+    if(x1-x0>2*h+1&&y1-y0>2*h+1){doc.els.push({type:'dim',id:nid(),ax:x0+h,ay:y0+h,bx:x1-h,by:y0+h,off:off,txt:''});
+      doc.els.push({type:'dim',id:nid(),ax:x0+h,ay:y0+h,bx:x0+h,by:y1-h,off:-off,txt:''});}}
+  commit();toast(n<4?'Cômodo criado, aproveitando paredes existentes':'Cômodo criado');fitIfOut(c[2]);return true;}
 function delSel(){const e=sel&&byId(sel);if(!e)return;doc.els=doc.els.filter(x=>x!==e&&!(e.type==='wall'&&x.wall===e.id));sel=null;commit();renderPanel();render();}
 function finishChain(){chain=null;chainStart=null;renderDrawbar();render();}
 
@@ -781,7 +816,7 @@ svg.addEventListener('pointermove',ev=>{
   if(g&&g.kind==='drag'){dragTo(raw,ev.shiftKey);return;}
   if(tool!=='sel'){hover=previewSnap(raw);render();}else if(ev.pointerType==='mouse'){hover={p:snapPoint(raw).p,kind:'grid'};$('#hud').textContent=`x ${fmt(raw[0])}  y ${fmt(-raw[1])}   1:${doc.cfg.scale}  malha ${doc.cfg.grid} cm`;}
 });
-function previewSnap(raw){if(tool==='wall')return snapPoint(raw,{from:chain});if(tool==='dim')return snapPoint(raw,{from:dimTmp&&!dimTmp.b?dimTmp.a:null,faces:true});if(tool==='door'||tool==='window'){const nw=nearWall(raw);return nw?{p:nw.pr.q,kind:'pt'}:{p:raw,kind:'grid'};}return snapPoint(raw);}
+function previewSnap(raw){if(tool==='wall'&&doc.cfg.wallMode==='ret')return snapPoint(raw);if(tool==='wall'||tool==='line')return snapPoint(raw,{from:chain});if(tool==='dim')return snapPoint(raw,{from:dimTmp&&!dimTmp.b?dimTmp.a:null,faces:true});if(tool==='door'||tool==='window'){const nw=nearWall(raw);return nw?{p:nw.pr.q,kind:'pt'}:{p:raw,kind:'grid'};}return snapPoint(raw);}
 function endPtr(ev){if(!ptrs.has(ev.pointerId))return;const sp=ptrs.get(ev.pointerId);ptrs.delete(ev.pointerId);
   if(!g)return;
   if(g.kind==='pinch'){if(ptrs.size===0)g=null;else g={kind:'none'};return;}
@@ -792,7 +827,7 @@ svg.addEventListener('pointerup',endPtr);svg.addEventListener('pointercancel',en
 svg.addEventListener('pointerleave',ev=>{if(ev.pointerType==='mouse'&&!g){hover=null;render();}});
 svg.addEventListener('contextmenu',ev=>ev.preventDefault());
 svg.addEventListener('wheel',ev=>{ev.preventDefault();const sp=spt(ev),w=s2w(sp[0],sp[1]),f=Math.exp(-ev.deltaY*0.0015);view.z=Math.min(40,Math.max(0.02,view.z*f));view.x0=w[0]-sp[0]/view.z;view.y0=w[1]-sp[1]/view.z;render();},{passive:false});
-svg.addEventListener('dblclick',()=>{if(tool==='wall'&&chain)finishChain();});
+svg.addEventListener('dblclick',()=>{if((tool==='wall'||tool==='line')&&chain)finishChain();});
 
 function dragTo(raw,free){const e=g.e,o=g.orig,gr=doc.cfg.snap?doc.cfg.grid:0.1,rg=v=>Math.round(v/gr)*gr;
   const d=V.sub(raw,g.start),dd=[rg(d[0]),rg(d[1])];
@@ -803,6 +838,9 @@ function dragTo(raw,free){const e=g.e,o=g.orig,gr=doc.cfg.snap?doc.cfg.grid:0.1,
   else if(e.type==='stair'||e.type==='text'){
     if(g.h==='rot'){const C=[e.x,e.y],v=V.sub(raw,C);let a=Math.atan2(v[1],v[0])*DEG;if(!free)a=Math.round(a/15)*15;e.a=normAng(a);}
     else{e.x=o.x+dd[0];e.y=o.y+dd[1];}}
+  else if(e.type==='line'){
+    if(g.h==='a'||g.h==='b'){const other=g.h==='a'?[e.bx,e.by]:[e.ax,e.ay],p=snapPoint(raw,{from:free?null:other,faces:true}).p;if(g.h==='a'){e.ax=p[0];e.ay=p[1];}else{e.bx=p[0];e.by=p[1];}}
+    else{e.ax=o.ax+dd[0];e.ay=o.ay+dd[1];e.bx=o.bx+dd[0];e.by=o.by+dd[1];}}
   else if(e.type==='dim'){
     if(g.h==='a'||g.h==='b'){const other=g.h==='a'?[e.bx,e.by]:[e.ax,e.ay],p=snapPoint(raw,{from:free?null:other,faces:true}).p;if(g.h==='a'){e.ax=p[0];e.ay=p[1];}else{e.bx=p[0];e.by=p[1];}}
     else{const a=[o.ax,o.ay],n=V.perp(V.norm(V.sub([o.bx,o.by],a)));e.off=rg(V.dot(V.sub(raw,a),n));}}
@@ -810,6 +848,15 @@ function dragTo(raw,free){const e=g.e,o=g.orig,gr=doc.cfg.snap?doc.cfg.grid:0.1,
 
 function onTap(raw,ev){
   if(tool==='sel'){if(sel){sel=null;renderPanel();}return;}
+  if(tool==='wall'&&doc.cfg.wallMode==='ret'){const p=snapPoint(raw).p,d=rectDims();
+    if(d){addRect(p,V.add(p,d));render();return;}
+    if(!rectP1){rectP1=p;updRectHint();render();return;}
+    if(addRect(rectP1,p))rectP1=null;updRectHint();render();return;}
+  if(tool==='line'){const p=snapPoint(raw,{from:chain}).p;
+    if(!chain){chain=p;chainStart=p;renderDrawbar();render();return;}
+    if(V.dist(p,chain)<1)return;doc.els.push({type:'line',id:nid(),ax:chain[0],ay:chain[1],bx:p[0],by:p[1],dash:!!doc.cfg.lineDash,lw:doc.cfg.lineW||0.18});commit();
+    if(chainStart&&V.dist(p,chainStart)<1){finishChain();return;}
+    chain=p;renderDrawbar();render();return;}
   if(tool==='wall'){const p=snapPoint(raw,{from:chain}).p;
     if(!chain){chain=p;chainStart=p;renderDrawbar();render();return;}
     if(V.dist(p,chain)<1)return;addWall(chain,p);commit();
@@ -831,11 +878,20 @@ function onTap(raw,ev){
 const HINTS={sel:'Toque num elemento para editar. Arraste para mover. Arraste o fundo para navegar, dois dedos para zoom.',
   wall:'',door:'Toque sobre uma parede para inserir a porta. Depois ajuste no painel.',window:'Toque sobre uma parede para inserir a janela.',
   stair:'Toque onde ficará o centro da escada. Gire pela alça ou pelo painel.',dim:'Toque o 1º ponto, o 2º ponto e depois onde passa a linha de cota.',text:'Toque onde o texto ficará.'};
-function setTool(t){tool=t;chain=null;chainStart=null;dimTmp=null;hover=null;document.querySelectorAll('.tool').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));renderDrawbar();render();}
+function setTool(t){tool=t;chain=null;chainStart=null;dimTmp=null;rectP1=null;hover=null;document.querySelectorAll('.tool').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));renderDrawbar();render();}
 function renderDrawbar(){const db=$('#drawbar');
   if(tool==='stair'){db.innerHTML=`<div class="grp"><label>Tipo</label>${[['reta','Reta'],['L','Em L'],['U','Em U']].map(([k,t])=>`<button class="btn${stairKind===k?' pri':''}" data-sk="${k}">${t}</button>`).join('')}</div><div class="hint">${HINTS.stair}</div>`;return;}
+  const c=doc.cfg,tg=(attr,v,t,on)=>`<button class="btn${on?' pri':''}" ${attr}="${v}">${t}</button>`;
+  if(tool==='line'){db.innerHTML=`<div class="grp">${tg('data-ld','0','Contínua',!c.lineDash)}${tg('data-ld','1','Tracejada',c.lineDash)}</div>
+    <div class="grp">${tg('data-lw','0.18','Fina',c.lineW==0.18)}${tg('data-lw','0.35','Média',c.lineW==0.35)}${tg('data-lw','0.5','Grossa',c.lineW==0.5)}</div>
+    ${chain?'<button class="btn pri" id="dbEnd">Concluir</button>':''}<div class="hint">${chain?'Toque o próximo ponto. Concluir, Esc ou toque duplo encerra a linha.':'Toque o ponto inicial da linha. Ela segue o travamento de ângulo e se prende às paredes.'}</div>`;return;}
   if(tool!=='wall'){db.innerHTML=`<div class="hint">${HINTS[tool]}</div>`;return;}
-  db.innerHTML=`<div class="grp"><label>Esp. cm</label><input id="dbT" inputmode="decimal" value="${doc.cfg.wallT}"></div>
+  const modeG=`<div class="grp">${tg('data-wm','linha','Em linha',c.wallMode!=='ret')}${tg('data-wm','ret','Retângulo',c.wallMode==='ret')}</div>`;
+  if(c.wallMode==='ret'){db.innerHTML=`${modeG}<div class="grp"><label>Esp. cm</label><input id="dbT" inputmode="decimal" value="${c.wallT}"></div>
+    <div class="grp"><label>Larg. m</label><input id="dbRW" inputmode="decimal" placeholder="3,00" value="${esc(rectW)}"><label>Comp. m</label><input id="dbRH" inputmode="decimal" placeholder="4,00" value="${esc(rectH)}">
+    <label style="display:flex;align-items:center;gap:4px;color:#dfe7e2"><input type="checkbox" id="dbRI" style="width:18px;height:18px"${c.rectInner?' checked':''}>internas</label></div>
+    <div class="hint" id="dbHint">${rectHint()}</div>`;return;}
+  db.innerHTML=`${modeG}<div class="grp"><label>Esp. cm</label><input id="dbT" inputmode="decimal" value="${doc.cfg.wallT}"></div>
   <div class="grp"><label>Medida m</label><input id="dbL" inputmode="decimal" placeholder="3,50">
   <button class="btn" data-dir="0" title="Direita">→</button><button class="btn" data-dir="90" title="Baixo">↓</button><button class="btn" data-dir="180" title="Esquerda">←</button><button class="btn" data-dir="-90" title="Cima">↑</button>
   <input id="dbA" inputmode="decimal" placeholder="ângulo°" style="width:70px"><button class="btn" data-dir="ang">+</button></div>
@@ -843,6 +899,9 @@ function renderDrawbar(){const db=$('#drawbar');
   <div class="hint">${chain?'Toque o próximo ponto ou digite a medida e escolha a direção.':'Toque o ponto inicial, ou digite a medida e a direção para começar na origem.'}</div>`;}
 $('#drawbar').addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;
   if(b.dataset.sk){stairKind=b.dataset.sk;renderDrawbar();return;}
+  if(b.dataset.wm){doc.cfg.wallMode=b.dataset.wm;chain=null;chainStart=null;rectP1=null;commit();renderDrawbar();render();return;}
+  if(b.dataset.ld){doc.cfg.lineDash=b.dataset.ld==='1';commit();renderDrawbar();return;}
+  if(b.dataset.lw){doc.cfg.lineW=+b.dataset.lw;commit();renderDrawbar();return;}
   if(b.id==='dbEnd'){finishChain();return;}
   if(b.dataset.dir!==undefined){const L=num($('#dbL').value)*100;if(!(L>0)){toast('Digite a medida em metros');$('#dbL').focus();return;}
     let a;if(b.dataset.dir==='ang'){const m=num($('#dbA').value);if(isNaN(m)){toast('Digite o ângulo (0° = direita, anti-horário)');return;}a=-m;}else a=+b.dataset.dir;
@@ -850,7 +909,10 @@ $('#drawbar').addEventListener('click',ev=>{const b=ev.target.closest('button');
     const p=R2(V.add(chain,V.rot([L,0],a)));addWall(chain,p);commit();
     if(chainStart&&V.dist(p,chainStart)<1){finishChain();toast('Contorno fechado');fitIfOut(p);return;}
     chain=p;renderDrawbar();fitIfOut(p);render();$('#dbL').value='';}});
-$('#drawbar').addEventListener('change',ev=>{if(ev.target.id==='dbT'){const t=num(ev.target.value);if(t>0){doc.cfg.wallT=t;commit();}}});
+$('#drawbar').addEventListener('change',ev=>{const id=ev.target.id;if(id==='dbT'){const t=num(ev.target.value);if(t>0){doc.cfg.wallT=t;commit();render();}}
+  if(id==='dbRI'){doc.cfg.rectInner=ev.target.checked;commit();renderDrawbar();render();}
+  if(id==='dbRW'||id==='dbRH'){rectP1=null;updRectHint();render();}});
+$('#drawbar').addEventListener('input',ev=>{const id=ev.target.id;if(id==='dbRW')rectW=ev.target.value;if(id==='dbRH')rectH=ev.target.value;if(id==='dbRW'||id==='dbRH'){rectP1=null;updRectHint();}});
 $('#drawbar').addEventListener('keydown',ev=>{if(ev.key==='Enter'&&ev.target.id==='dbL'){ev.preventDefault();toast('Escolha a direção: → ↓ ← ↑');}});
 function fitIfOut(p){const sx=(p[0]-view.x0)*view.z,sy=(p[1]-view.y0)*view.z;if(sx<30||sy<60||sx>W-30||sy>H-30)fit();}
 document.querySelectorAll('.tool').forEach(b=>b.addEventListener('click',()=>setTool(b.dataset.tool)));
@@ -872,12 +934,12 @@ function renderPanel(){const e=sel&&byId(sel);let h='';const c=doc.cfg;
     ${selr('Preenchimento parede','cFill',c.fill,[['#cfcfcf','Cinza claro'],['#9a9a9a','Cinza escuro'],['#ffffff','Branco'],['#222222','Preto']])}
     ${chk('Cotas automáticas nas paredes','cWallDims',c.wallDims)}
     <div class="sep"></div><div class="info">A escala de trabalho define o tamanho dos textos e cotas na tela. No PDF vale a escala escolhida na exportação.</div>
-    <div class="info">Atalhos no teclado: V selecionar, W parede, P porta, J janela, E escada, C cota, T texto, R girar 90°, Del excluir, Esc concluir.</div>`;}
+    <div class="info">Atalhos no teclado: V selecionar, W parede, L linha, P porta, J janela, E escada, C cota, T texto, R girar 90°, Del excluir, Esc concluir.</div>`;}
   else if(e.type==='wall'){const{L,u}=wInfo(e);h=`<h3>Parede</h3>
     ${row('Comprimento (m)','wL',fmt(L))}${row('Ângulo (°)','wAng',mathAng(Math.atan2(u[1],u[0])*DEG))}${row('Espessura (cm)','wT',e.t)}
     ${row('Ponto A, x (m)','wAx',fmt(e.ax))}${row('Ponto A, y (m)','wAy',fmt(-e.ay))}
-    ${chk('Mostrar cota','wDim',e.dim!==false)}
-    <div class="info">A cota mede o eixo da parede, de A até B. Para medida de face, use a ferramenta Cota.</div>
+    ${selr('Cota da parede','wDim',e.dim===false?'nao':e.dim==='sim'?'sim':'auto',[['auto','Automática'],['sim','Sempre mostrar'],['nao','Ocultar']])}
+    <div class="info">A cota mede o eixo da parede, de A até B. No modo automático, paredes internas (com paredes dos dois lados) ficam sem cota de eixo. Para medida de face, use a ferramenta Cota.</div>
     <div class="acts">${btn('Inverter lado da cota','dimFlip')}${btn('+ Porta aqui','addDoor')}${btn('+ Janela aqui','addWin')}${btn('Excluir','del','danger')}</div>`;}
   else if(e.type==='door'||e.type==='window'){const w=byId(e.wall),{L}=wInfo(w),[s0,s1]=openingSpan(e,w),isD=e.type==='door';h=`<h3>${isD?'Porta':'Janela'}</h3>
     ${isD?selr('Tipo','oDt',e.dt,[['abrir','De abrir'],['dupla','De abrir, 2 folhas'],['correr','De correr']]):''}
@@ -893,6 +955,12 @@ function renderPanel(){const e=sel&&byId(sel);let h='';const c=doc.cfg;
     <div class="info">${tr.length>1?`1º lance: ${tr[0][1]} pisos de ${fmt(tr[0][0])} m. 2º lance: ${tr[1][1]} pisos de ${fmt(tr[1][0])} m.`:`Piso resultante: ${fmt(tr[0][0])} m`}${k!=='reta'?' O patamar é quadrado, com lado igual à largura do lance.':''}</div>
     ${row('Ângulo (°)','sA',mathAng(e.a))}${trow('Texto','sLab',e.label||'')}
     <div class="acts">${btn('↺ 90°','r-90')}${btn('↻ 90°','r90')}${btn('180°','r180')}${(e.kind||'reta')!=='reta'?btn('Virar para o outro lado','sFlip'):''}${btn('Excluir','del','danger')}</div>`;}
+  else if(e.type==='line'){const d=V.sub([e.bx,e.by],[e.ax,e.ay]);h=`<h3>Linha</h3>
+    ${selr('Tipo','lSt',e.dash?'1':'0',[['0','Contínua'],['1','Tracejada']])}
+    ${selr('Espessura','lW',e.lw||0.18,[[0.18,'Fina'],[0.35,'Média'],[0.5,'Grossa']])}
+    ${row('Comprimento (m)','lL',fmt(V.len(d)))}${row('Ângulo (°)','lAng',mathAng(Math.atan2(d[1],d[0])*DEG))}
+    <div class="info">Comprimento e ângulo alteram a extremidade B. Para mover, arraste a linha.</div>
+    <div class="acts">${btn('Excluir','del','danger')}</div>`;}
   else if(e.type==='dim'){const L=V.dist([e.ax,e.ay],[e.bx,e.by]);h=`<h3>Cota</h3><div class="info">Medida: ${fmt(L)} m</div>
     ${row('Afastamento (m)','dOff',fmt(e.off))}${trow('Texto manual','dTxt',e.txt||'')}
     <div class="info">Deixe o texto manual vazio para usar a medida real.</div>
@@ -902,7 +970,7 @@ function renderPanel(){const e=sel&&byId(sel);let h='';const c=doc.cfg;
     <div class="acts">${btn('↻ 90°','r90')}${btn('Excluir','del','danger')}</div>`;}
   pb.innerHTML=h;$('#sheetBtn').textContent=e?'Propriedades':'Configurações';
   if(matchMedia('(max-width:820px)').matches){$('#panel').classList.toggle('open',!!e);if(e)setTimeout(()=>keepVisible(e),230);}}
-function elCenter(e){if(e.type==='wall'||e.type==='dim')return[(e.ax+e.bx)/2,(e.ay+e.by)/2];
+function elCenter(e){if(e.type==='wall'||e.type==='dim'||e.type==='line')return[(e.ax+e.bx)/2,(e.ay+e.by)/2];
   if(e.type==='door'||e.type==='window'){const w=byId(e.wall);if(!w)return null;const{A,u}=wInfo(w),[,,c]=openingSpan(e,w);return V.add(A,V.mul(u,c));}return[e.x,e.y];}
 function keepVisible(e){const c=elCenter(e);if(!c)return;const ph=$('#panel').getBoundingClientRect().height,vis=Math.max(120,H-ph),sx=(c[0]-view.x0)*view.z,sy=(c[1]-view.y0)*view.z;
   if(sy>vis-40||sy<70)view.y0=c[1]-(vis/2+20)/view.z;if(sx<30||sx>W-30)view.x0=c[0]-W/2/view.z;render();}
@@ -915,8 +983,11 @@ pb.addEventListener('change',ev=>{const t=ev.target,k=t.dataset.k;if(!k)return;c
     case'wL':{if(!(n>0))return bad();const{A,u}=wInfo(e);moveEnd(e,'b',R2(V.add(A,V.mul(u,n*100))));break;}
     case'wAng':{if(isNaN(n))return bad();const{A,L}=wInfo(e);moveEnd(e,'b',R2(V.add(A,V.rot([L,0],-n))));break;}
     case'wT':if(n>0)e.t=n;else return bad();break;
+    case'lSt':e.dash=v==='1';break;case'lW':e.lw=+v;break;
+    case'lL':{if(!(n>0))return bad();const a=[e.ax,e.ay],u=V.norm(V.sub([e.bx,e.by],a)),q=R2(V.add(a,V.mul(u,n*100)));e.bx=q[0];e.by=q[1];break;}
+    case'lAng':{if(isNaN(n))return bad();const a=[e.ax,e.ay],L=V.dist(a,[e.bx,e.by]),q=R2(V.add(a,V.rot([L,0],-n)));e.bx=q[0];e.by=q[1];break;}
     case'wAx':case'wAy':{if(isNaN(n))return bad();const d=k==='wAx'?[n*100-e.ax,0]:[0,-n*100-e.ay],la=linkedAt([e.ax,e.ay],e),lb=linkedAt([e.bx,e.by],e);moveEnd(e,'a',V.add([e.ax,e.ay],d),la);moveEnd(e,'b',V.add([e.bx,e.by],d),lb);break;}
-    case'wDim':e.dim=v;break;
+    case'wDim':e.dim=v==='nao'?false:v==='sim'?'sim':true;break;
     case'oDt':e.dt=v;break;
     case'oW':{if(!(n>0))return bad();const w=byId(e.wall),[s0]=openingSpan(e,w);e.w=n*100;e.c=s0+e.w/2;break;}
     case'oH':if(n>0)e.h=n*100;else return bad();break;case'oSill':if(n>=0)e.sill=n*100;else return bad();break;
@@ -934,7 +1005,7 @@ pb.addEventListener('change',ev=>{const t=ev.target,k=t.dataset.k;if(!k)return;c
 pb.addEventListener('click',ev=>{const b=ev.target.closest('[data-act]');if(!b)return;const a=b.dataset.act,e=sel&&byId(sel);if(!e)return;
   switch(a){
     case'del':return delSel();
-    case'dimFlip':e.ds=-dimSide(e);break;
+    case'dimFlip':e.ds=-(wallDimSide(e,centroid())||dimSide(e));break;
     case'addDoor':case'addWin':{const o=addOpening(a==='addDoor'?'door':'window',e,wInfo(e).L/2);if(o)sel=o.id;break;}
     case'oSide':e.side=-(e.side||1);break;case'oHinge':e.hinge=e.hinge?0:1;break;case'oLs':if(e.type==='door'&&e.dt!=='correr')e.side=-(e.side||1);else e.ls=-(e.ls||1);break;
     case'sFlip':e.s=-(e.s||1);break;case'r90':e.a=normAng(e.a-90);break;case'r-90':e.a=normAng(e.a+90);break;case'r180':e.a=normAng(e.a+180);break;
@@ -963,11 +1034,11 @@ document.addEventListener('keydown',ev=>{const tg=ev.target.tagName;if(tg==='INP
   if((ev.ctrlKey||ev.metaKey)&&k==='s'){ev.preventDefault();CMDS.save();return;}
   if(ev.ctrlKey||ev.metaKey||ev.altKey)return;
   if(k===' '){spaceDown=true;return;}
-  if(k==='escape'){if(chain)finishChain();else if(dimTmp){dimTmp=null;render();}else if(sel){sel=null;renderPanel();render();}else setTool('sel');return;}
+  if(k==='escape'){if(chain)finishChain();else if(rectP1){rectP1=null;render();}else if(dimTmp){dimTmp=null;render();}else if(sel){sel=null;renderPanel();render();}else setTool('sel');return;}
   if(k==='delete'||k==='backspace'){delSel();return;}
   if(k==='enter'&&chain){finishChain();return;}
   if(k==='r'){const e=sel&&byId(sel);if(e&&(e.type==='stair'||e.type==='text')){e.a=normAng(e.a-90);commit();renderPanel();render();}return;}
-  const map={v:'sel',w:'wall',p:'door',j:'window',e:'stair',c:'dim',t:'text'};if(map[k])setTool(map[k]);
+  const map={v:'sel',w:'wall',p:'door',j:'window',e:'stair',c:'dim',t:'text',l:'line'};if(map[k])setTool(map[k]);
   if(k==='f')fit();});
 document.addEventListener('keyup',ev=>{if(ev.key===' ')spaceDown=false;});
 
@@ -983,7 +1054,7 @@ function pdfPrims(pdf,prims,T,k){
   pdf.setLineJoin('miter');pdf.setLineCap('butt');pdf.setFont('helvetica','normal');pdf.setTextColor(0,0,0);
   for(const p of prims){
     if(p.k==='poly'){const pts=p.pts.map(T);if(pts.length<2)continue;
-      if(p.fill)pdf.setFillColor(...rgb(p.fill));if(p.stroke){pdf.setDrawColor(...rgb(p.stroke));pdf.setLineWidth(p.lw);}
+      if(p.fill)pdf.setFillColor(...rgb(p.fill));if(p.stroke){pdf.setDrawColor(...rgb(p.stroke));pdf.setLineWidth(p.lw);pdf.setLineDashPattern(p.dash||[],0);}
       const d=[];for(let i=1;i<pts.length;i++)d.push([pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]]);
       pdf.lines(d,pts[0][0],pts[0][1],[1,1],p.fill&&p.stroke?'FD':p.fill?'F':'S',!!p.closed);}
     else{const c=T(p.p),hm=p.h,a=p.a*Math.PI/180,dir=[Math.cos(a),Math.sin(a)],dn=[-Math.sin(a),Math.cos(a)];
